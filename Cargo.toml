@@ -1,0 +1,18 @@
+[package]
+name = "auth-client"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["dto"]
+dto     = []
+client  = ["dto", "dep:reqwest", "dep:tokio", "dep:axum", "dep:http"]
+routes  = ["client"]
+full    = ["client", "routes"]
+
+[dependencies]
+serde   = { version = "1.0", features = ["derive"] }
+reqwest = { version = "0.12", features = ["json"], optional = true }
+tokio   = { version = "1", features = ["macros", "rt-multi-thread"], optional = true }
+axum    = { version = "0.7", optional = true }
+http    = { version = "1", optional = true }
