@@ -19,9 +19,30 @@ use crate::dto::{
     LoggedUser, NewUserRequest, RefreshResponse, UpdateInvitationRequest, UpdateNameRequest, UserAccount,
 };
 
-/// Callback type invoked after a successful login or account creation.
-/// Receives the authenticated user; returns `Err(msg)` to abort with 500.
-pub type OnUserLogin = Arc<dyn Fn(&UserAccount) -> Result<(), String> + Send + Sync>;
+type Callback = Arc<dyn Fn(&UserAccount) -> Result<(), String> + Send + Sync>;
+
+/// Callbacks passed to [`auth_router`]. All fields are optional — omitted hooks are simply skipped.
+///
+/// Build with [`AuthCallbacks::default()`] and chain setters for the hooks you need.
+#[derive(Clone, Default)]
+pub struct AuthCallbacks {
+    on_user_login: Option<Callback>,
+    on_user_update: Option<Callback>,
+}
+
+impl AuthCallbacks {
+    /// Called after a successful login or account creation.
+    pub fn on_user_login(mut self, f: impl Fn(&UserAccount) -> Result<(), String> + Send + Sync + 'static) -> Self {
+        self.on_user_login = Some(Arc::new(f));
+        self
+    }
+
+    /// Called after a successful name update.
+    pub fn on_user_update(mut self, f: impl Fn(&UserAccount) -> Result<(), String> + Send + Sync + 'static) -> Self {
+        self.on_user_update = Some(Arc::new(f));
+        self
+    }
+}
 
 fn extract_bearer(headers: &HeaderMap) -> Result<&str, (StatusCode, String)> {
     headers
@@ -34,22 +55,24 @@ fn extract_bearer(headers: &HeaderMap) -> Result<&str, (StatusCode, String)> {
 // ---- Public handlers ----
 
 async fn login(
-    Extension(on_user_login): Extension<OnUserLogin>,
+    Extension(cb): Extension<AuthCallbacks>,
     Json(payload): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, (StatusCode, String)> {
     let response = client::login(&payload.email, &payload.password).await?;
-    on_user_login(&response.user_account)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    if let Some(f) = &cb.on_user_login {
+        f(&response.user_account).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    }
     Ok(Json(response))
 }
 
 async fn create_account(
-    Extension(on_user_login): Extension<OnUserLogin>,
+    Extension(cb): Extension<AuthCallbacks>,
     Json(payload): Json<NewUserRequest>,
 ) -> Result<Json<LoginResponse>, (StatusCode, String)> {
     let response = client::create_account(payload).await?;
-    on_user_login(&response.user_account)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    if let Some(f) = &cb.on_user_login {
+        f(&response.user_account).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    }
     Ok(Json(response))
 }
 
@@ -75,12 +98,15 @@ pub async fn change_password(
 pub async fn update_name(
     headers: HeaderMap,
     Extension(_user): Extension<LoggedUser>,
+    Extension(cb): Extension<AuthCallbacks>,
     Json(payload): Json<UpdateNameRequest>,
 ) -> Result<Json<UserAccount>, (StatusCode, String)> {
     let token = extract_bearer(&headers)?;
-    client::update_name(token, &payload.display_name)
-        .await
-        .map(Json)
+    let account = client::update_name(token, &payload.display_name).await?;
+    if let Some(f) = &cb.on_user_update {
+        f(&account).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    }
+    Ok(Json(account))
 }
 
 // ---- Invitation handlers (admin only) ----
@@ -159,25 +185,23 @@ pub async fn delete_invitation(
 
 /// Returns a Router with all auth routes mounted.
 ///
-/// `on_user_login` is called after successful login or account creation.
-/// Use it to sync the user into a local DB, or pass `|_| Ok(())` to skip.
+/// Pass an [`AuthCallbacks`] to hook into login/create and name-update events.
+/// All callbacks are optional — chain only the ones you need.
 ///
 /// ```rust
-/// auth_router(|user| user_service::upsert_shadow_user(user))
+/// auth_router(AuthCallbacks::default()
+///     .on_user_login(|user| user_service::upsert(user))
+///     .on_user_update(|user| user_service::update_name(user)))
 /// ```
 ///
 /// Public routes:    POST /login, POST /accounts
 /// Protected routes: POST /auth/refresh, POST /accounts/change_passwd,
 ///                   PUT  /accounts/update_name, CRUD /accounts/invitations
-pub fn auth_router(
-    on_user_login: impl Fn(&UserAccount) -> Result<(), String> + Send + Sync + 'static,
-) -> Router {
-    let callback: OnUserLogin = Arc::new(on_user_login);
-
+pub fn auth_router(callbacks: AuthCallbacks) -> Router {
     let public = Router::new()
         .route("/login", post(login))
         .route("/accounts", post(create_account))
-        .layer(Extension(callback));
+        .layer(Extension(callbacks.clone()));
 
     let protected = Router::new()
         .route("/auth/refresh", post(refresh_token))
@@ -185,6 +209,7 @@ pub fn auth_router(
         .route("/accounts/update_name", put(update_name))
         .route("/accounts/invitations", get(list_invitations).post(create_invitation))
         .route("/accounts/invitations/:id", get(get_invitation).put(update_invitation).delete(delete_invitation))
+        .layer(Extension(callbacks))
         .route_layer(from_fn(jwt_auth));
 
     public.merge(protected)
