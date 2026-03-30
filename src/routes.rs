@@ -208,7 +208,7 @@ pub fn auth_router(callbacks: AuthCallbacks) -> Router {
         .route("/accounts/change_passwd", post(change_password))
         .route("/accounts/update_name", put(update_name))
         .route("/accounts/invitations", get(list_invitations).post(create_invitation))
-        .route("/accounts/invitations/:id", get(get_invitation).put(update_invitation).delete(delete_invitation))
+        .route("/accounts/invitations/{id}", get(get_invitation).put(update_invitation).delete(delete_invitation))
         .layer(Extension(callbacks))
         .route_layer(from_fn(jwt_auth));
 
