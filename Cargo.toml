@@ -1,12 +1,12 @@
 [package]
 name = "auth-client"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 
 [features]
 default = ["dto"]
 dto     = []
-client  = ["dto", "dep:reqwest", "dep:tokio", "dep:axum", "dep:http"]
+client  = ["dto", "dep:reqwest", "dep:tokio", "dep:axum", "dep:http", "dep:tracing"]
 routes  = ["client"]
 full    = ["client", "routes"]
 
@@ -16,3 +16,4 @@ reqwest = { version = "0.12", features = ["json"], optional = true }
 tokio   = { version = "1", features = ["macros", "rt-multi-thread"], optional = true }
 axum    = { version = "0.8", optional = true }
 http    = { version = "1", optional = true }
+tracing = { version = "0.1", optional = true }

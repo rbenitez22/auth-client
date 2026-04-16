@@ -2,6 +2,7 @@ use http::StatusCode;
 use reqwest::{Client, RequestBuilder};
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
+use tracing::{debug, error, warn};
 use axum::extract::Request;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -50,7 +51,10 @@ fn bearer(token: &str) -> String {
 }
 
 async fn send(builder: RequestBuilder) -> Result<reqwest::Response, (StatusCode, String)> {
-    builder.send().await.map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))
+    builder.send().await.map_err(|e| {
+        error!(error = %e, "auth-api request failed (connection error)");
+        (StatusCode::BAD_GATEWAY, e.to_string())
+    })
 }
 
 async fn get(url: &str, token: &str) -> Result<reqwest::Response, (StatusCode, String)> {
@@ -122,11 +126,13 @@ async fn forward_response<T: for<'de> Deserialize<'de>>(
 ) -> Result<T, (StatusCode, String)> {
     let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     if status.is_success() {
-        resp.json::<T>()
-            .await
-            .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))
+        resp.json::<T>().await.map_err(|e| {
+            error!(error = %e, "auth-api response deserialization failed");
+            (StatusCode::BAD_GATEWAY, e.to_string())
+        })
     } else {
         let msg = resp.text().await.unwrap_or_default();
+        warn!(status = %status, body = %msg, "auth-api returned error");
         Err((status, msg))
     }
 }
@@ -137,6 +143,7 @@ async fn forward_empty_response(resp: reqwest::Response) -> Result<(), (StatusCo
         Ok(())
     } else {
         let msg = resp.text().await.unwrap_or_default();
+        warn!(status = %status, body = %msg, "auth-api returned error");
         Err((status, msg))
     }
 }
@@ -147,6 +154,7 @@ async fn forward_empty_response(resp: reqwest::Response) -> Result<(), (StatusCo
 /// Called by the jwt_auth middleware for every protected request.
 pub async fn validate_token(user_token: &str) -> Result<LoggedUser, String> {
     let url = format!("{}/auth/validate", auth_url());
+    debug!(url = %url, "calling auth-api validate");
     let resp = post_json(&url, app_token(), &ValidateTokenBody { user_token }).await.map_err(|e| e.1)?;
 
     let body: ValidateTokenResponse = resp.json().await.map_err(|e| e.to_string())?;
@@ -166,6 +174,7 @@ pub async fn validate_token(user_token: &str) -> Result<LoggedUser, String> {
 /// Forward a login request to auth-api (app-token protected).
 pub async fn login(email: &str, password: &str) -> Result<LoginResponse, (StatusCode, String)> {
     let url = format!("{}/login", auth_url());
+    debug!(url = %url, "calling auth-api login");
     let resp = post_json(&url, app_token(), &LoginBody { email, password }).await?;
     forward_response::<LoginResponse>(resp).await
 }
@@ -173,6 +182,7 @@ pub async fn login(email: &str, password: &str) -> Result<LoginResponse, (Status
 /// Forward a create-account request to auth-api (public endpoint).
 pub async fn create_account(req: NewUserRequest) -> Result<LoginResponse, (StatusCode, String)> {
     let url = format!("{}/accounts", auth_url());
+    debug!(url = %url, "calling auth-api create_account");
     let body = CreateAccountBody { display_name: req.display_name, email: req.email, password: req.password };
     let resp = send(client().post(&url).json(&body)).await?; // no auth header — public endpoint
     forward_response::<LoginResponse>(resp).await
