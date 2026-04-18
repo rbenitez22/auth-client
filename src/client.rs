@@ -1,18 +1,20 @@
-use http::StatusCode;
+use axum::extract::Request;
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
+use http::{HeaderValue, StatusCode};
 use reqwest::{Client, RequestBuilder};
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 use tracing::{debug, error, warn};
-use axum::extract::Request;
-use axum::middleware::Next;
-use axum::response::{IntoResponse, Response};
 use crate::dto::{AccountInvitation, ChangePasswordRequest, InvitationRequest, LoggedUser, LoginResponse, NewUserRequest, RefreshResponse, UpdateInvitationRequest, UserAccount};
 
 static AUTH_API_URL: OnceLock<String> = OnceLock::new();
 static AUTH_APP_SECRET: OnceLock<String> = OnceLock::new();
 static HTTP_CLIENT: OnceLock<Client> = OnceLock::new();
+static RESOURCE_METADATA_URL: OnceLock<String> = OnceLock::new();
 
 /// JWT auth middleware — validates the bearer token by calling the auth-api.
+/// On 401, includes `WWW-Authenticate` if `init_resource_metadata` was called.
 pub async fn jwt_auth(mut req: Request, next: Next) -> Response {
     async fn authenticate(req: &mut Request) -> Option<LoggedUser> {
         let header = req.headers().get("Authorization")?;
@@ -25,13 +27,28 @@ pub async fn jwt_auth(mut req: Request, next: Next) -> Response {
             req.extensions_mut().insert(claims);
             next.run(req).await
         }
-        None => StatusCode::UNAUTHORIZED.into_response(),
+        None => {
+            let mut resp = StatusCode::UNAUTHORIZED.into_response();
+            if let Some(url) = RESOURCE_METADATA_URL.get() {
+                let value = format!("Bearer resource_metadata=\"{}\"", url);
+                if let Ok(hv) = HeaderValue::from_str(&value) {
+                    resp.headers_mut().insert("WWW-Authenticate", hv);
+                }
+            }
+            resp
+        }
     }
 }
 
 pub fn init(url: String, secret: String) {
     let _ = AUTH_API_URL.set(url);
     let _ = AUTH_APP_SECRET.set(secret);
+}
+
+/// Optional — call at startup to enable WWW-Authenticate on 401 responses.
+/// `url` should be the `/.well-known/oauth-protected-resource` URL for this server.
+pub fn init_resource_metadata(url: String) {
+    let _ = RESOURCE_METADATA_URL.set(url);
 }
 
 fn auth_url() -> &'static str {

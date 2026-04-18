@@ -113,13 +113,26 @@ auth_client::client::init(url: String, secret: String)
 
 Sets the auth-api base URL and the shared application secret used for server-to-server authentication. Uses `OnceLock` — safe to call from `main` before the async runtime starts.
 
+```rust
+auth_client::client::init_resource_metadata(url: String)
+```
+
+Optional. When set, `jwt_auth` includes a `WWW-Authenticate: Bearer resource_metadata="<url>"` header on every 401 response. `url` should be the full URL to this server's `/.well-known/oauth-protected-resource` endpoint. Required for MCP clients (e.g. Claude) to auto-discover the OAuth flow on token expiry.
+
+```rust
+// Example
+auth_client::client::init_resource_metadata(
+    "https://garcon.example.com/.well-known/oauth-protected-resource".to_string(),
+);
+```
+
 #### JWT Middleware
 
 ```rust
 pub async fn jwt_auth(mut req: Request, next: Next) -> Response
 ```
 
-An Axum middleware function. Validates Bearer tokens against the auth-api. On success, injects a `LoggedUser` into request extensions. On failure, returns `401 Unauthorized`.
+An Axum middleware function. Validates Bearer tokens against the auth-api. On success, injects a `LoggedUser` into request extensions. On failure, returns `401 Unauthorized` (with `WWW-Authenticate` header if `init_resource_metadata` was called).
 
 **Extracting the current user in handlers:**
 
@@ -226,10 +239,11 @@ auth-client
 └── routes.rs    ← Axum handlers + router builder (feature: routes)
 ```
 
-The client stores three singletons via `OnceLock`:
+The client stores four singletons via `OnceLock`:
 - `AUTH_API_URL` — base URL of the auth-api
 - `AUTH_APP_SECRET` — shared app secret (sent as `Authorization: <secret>` on server-to-server calls)
 - `HTTP_CLIENT` — shared `reqwest::Client`
+- `RESOURCE_METADATA_URL` — optional; when set, 401 responses include `WWW-Authenticate`
 
 ---
 
