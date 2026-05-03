@@ -197,14 +197,14 @@ pub async fn delete_invitation(
 /// Public routes:    POST /login, POST /accounts
 /// Protected routes: POST /auth/refresh, POST /accounts/change_passwd,
 ///                   PUT  /accounts/update_name, CRUD /accounts/invitations
-pub fn auth_router(callbacks: AuthCallbacks) -> Router {
+pub fn auth_router<S: Clone + Send + Sync + 'static>(callbacks: AuthCallbacks) -> Router<S> {
     let public = Router::new()
         .route("/login", post(login))
         .route("/accounts", post(create_account))
         .layer(Extension(callbacks.clone()));
 
     let protected = Router::new()
-        .route("/auth/refresh", post(refresh_token))
+        .route("/refresh", post(refresh_token))
         .route("/accounts/change_passwd", post(change_password))
         .route("/accounts/update_name", put(update_name))
         .route("/accounts/invitations", get(list_invitations).post(create_invitation))

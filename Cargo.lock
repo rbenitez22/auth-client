@@ -1755,11 +1755,7 @@ checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 
 [[patch.unused]]
 name = "webapp-lib"
-version = "0.3.0"
-
-[[patch.unused]]
-name = "ferrox-webapp-macros"
-version = "0.1.0"
+version = "0.3.1"
 
 [[patch.unused]]
 name = "product-db-client"
@@ -1771,4 +1767,8 @@ version = "0.1.0"
 
 [[patch.unused]]
 name = "ferrox-traits"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "ferrox-webapp-macros"
 version = "0.1.0"
